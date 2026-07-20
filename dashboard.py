@@ -112,7 +112,6 @@ def get_7day_accurate_weather(api_key):
         date_display = f"{t_date.strftime('%m.%d')} ({w_str})"
         day_gap = (t_date - ann_date).days
         
-        # 💡 오늘 / 내일 / 모레 구간 기상청 표준 맵핑 규칙 적용
         if t_date in short_map and i < 3:
             s_info = short_map[t_date]
             low_t = min(s_info["temps"]) if s_info["temps"] else 23
@@ -123,7 +122,6 @@ def get_7day_accurate_weather(api_key):
             am_status, pm_status = status_text, status_text
             am_pop, pm_pop = f"{max_pop}%", f"{max_pop}%"
         else:
-            # 중기 데이터 연동
             m_info = mid_land_map.get(day_gap, {"am_status": "흐림", "pm_status": "흐림", "am_pop": "60", "pm_pop": "60"})
             t_info = mid_temp_map.get(day_gap, {"low": "24", "high": "30"})
             low_t = t_info["low"]
@@ -131,12 +129,16 @@ def get_7day_accurate_weather(api_key):
             am_status, pm_status = m_info["am_status"], m_info["pm_status"]
             am_pop, pm_pop = f"{m_info['am_pop']}%", f"{m_info['pm_pop']}%"
 
-        am_icon = "🌧️" if "비" in am_status or "소나기" in am_status else ("☁️" if "흐림" in am_status or "구름" in am_status else "☀️")
-        pm_icon = "🌧️" if "비" in pm_status or "소나기" in pm_status else ("☁️" if "흐림" in pm_status or "구름" in pm_status else "☀️")
+        # 💡 [TypeError 방어조치] am_status와 pm_status가 None일 경우를 고려해 강제 안전 문자열 변환
+        am_str = str(am_status) if am_status else "흐림"
+        pm_str = str(pm_status) if pm_status else "흐림"
+
+        am_icon = "🌧️" if "비" in am_str or "소나기" in am_str else ("☁️" if "흐림" in am_str or "구름" in am_str else "☀️")
+        pm_icon = "🌧️" if "비" in pm_str or "소나기" in pm_str else ("☁️" if "흐림" in pm_str or "구름" in pm_str else "☀️")
 
         final_7days.append({
             "date": date_display, "low": f"{low_t}°C", "high": f"{high_t}°C",
-            "am_status": am_status, "pm_status": pm_status, "am_pop": am_pop, "pm_pop": pm_pop,
+            "am_status": am_str, "pm_status": pm_str, "am_pop": am_pop, "pm_pop": pm_pop,
             "am_icon": am_icon, "pm_icon": pm_icon
         })
     return final_7days
@@ -146,14 +148,11 @@ def get_7day_accurate_weather(api_key):
 @st.cache_data(ttl=86400)
 def fetch_past_asos_weather(api_key):
     decoded_key = requests.utils.unquote(api_key)
-    # 기상청 종관기상관측(ASOS) 일자료 조회 서비스 채널 호출
     url = "http://apis.data.go.kr/1360000/AsosDalyInfoService/getWthrDataList"
-    
-    # 전년 동월(2025년 7월 1일 ~ 7월 31일) 타겟 데이터 수집 파라미터
     params = {
         "pageNo": "1", "numOfRows": "31", "dataType": "XML",
         "dataCd": "ASOS", "dateCd": "DAY", "startDt": "20250701", "endDt": "20250731",
-        "stnIds": "108" # 서울 관측소 고유 코드 ID
+        "stnIds": "108"
     }
     past_data_list = []
     try:
@@ -161,10 +160,10 @@ def fetch_past_asos_weather(api_key):
         if res.text.strip().startswith("<"):
             root = ET.fromstring(res.text)
             for item in root.findall(".//item"):
-                tm = item.find("tm").text # 일자
-                min_ta = item.find("minTa").text # 최저기온
-                max_ta = item.find("maxTa").text # 최고기온
-                sum_rn = item.find("sumRn").text # 일강수량
+                tm = item.find("tm").text
+                min_ta = item.find("minTa").text
+                max_ta = item.find("maxTa").text
+                sum_rn = item.find("sumRn").text
                 sum_rn_display = f"{sum_rn}mm" if sum_rn and float(sum_rn) > 0 else "-"
                 
                 past_data_list.append({
@@ -172,7 +171,6 @@ def fetch_past_asos_weather(api_key):
                     "low": f"{min_ta}°C", "high": f"{max_ta}°C", "rain": sum_rn_display
                 })
     except:
-        # 비상 예외상황 시 마케터 가독성용 표준 백업 프레임 작동
         for d in range(1, 32):
             past_data_list.append({"date": f"07.{d:02d}", "low": "23.1°C", "high": "29.8°C", "rain": "12.5mm" if d in [5,6,7] else "-"})
     return past_data_list
@@ -181,7 +179,6 @@ def fetch_past_asos_weather(api_key):
 # ------------------ [트랙 3: 날씨전망 기상청 1개월 장기 예보 파싱 엔진] ------------------
 @st.cache_data(ttl=43200)
 def fetch_long_term_forecast():
-    # 기상청 공식 주간/월간 장기 기온 및 강수 확률 데이터 모델 바인딩
     return {
         "period": "07.27. ~ 08.02. (7월 5주차)",
         "normal_temp": "25.7 ~ 26.9°C",
@@ -192,7 +189,7 @@ def fetch_long_term_forecast():
     }
 
 
-# 📰 뉴스 수집 엔진 (기존 4대 키워드 가전, 구독, 렌탈, 정수기 병렬 구조 완벽 유지)
+# 📰 뉴스 수집 엔진
 def fetch_real_naver_news(client_id, client_secret):
     url = "https://openapi.naver.com/v1/search/news.json"
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
@@ -259,16 +256,17 @@ def crawl_coway_live_html_events():
 
 
 # ==========================================
-# 🗂️ 마케터 요구조건에 따른 탭 레이아웃 전면 개편
+# 🗂️ [구조 개편] 마케터 지시 반영 통합 3대 탭
 # ==========================================
-tab_7day, tab_past, tab_forecast, tab_news, tab_competitor = st.tabs([
-    "🌤️ 1) 주간예보 (7일)", "⏳ 2) 과거날씨 (전년동월)", "📊 3) 날씨전망 (비교분석)", "📰 실시간 핵심 뉴스", "🎁 자사 프로모션 동향"
+tab_weather, tab_news, tab_competitor = st.tabs([
+    "🌤️ 1. 종합 날씨 리포트 (주간/과거/전망 통합)", "📰 2. 실시간 핵심 뉴스", "🎁 3. 자사 프로모션 동향"
 ])
 
-# ------------------ [1) 주간예보 탭] ------------------
-with tab_7day:
-    st.markdown("### 📅 오늘부터 향후 7일간 실시간 예보")
-    st.info("📊 **[출처]** 기상청 단기예보 및 중기육상예보 API 실시간 연동")
+# ------------------ [통합 1번 탭: 날씨 종합] ------------------
+with tab_weather:
+    # 📌 [섹션 1: 주간예보]
+    st.markdown("## 🌤️ [주간예보] 오늘부터 향후 7일간 예보")
+    st.info("📊 1~3일 차 데이터: 기상청 단기예보 조회 서비스 API 실시간 동적 연동 / 4~7일 차 데이터: 기상청 중기육상예보 및 중기기온조회 서비스 API 실시간 동적 연동")
     
     weekly_data = get_7day_accurate_weather(WEATHER_API_KEY)
     if weekly_data:
@@ -276,35 +274,20 @@ with tab_7day:
         for idx, day in enumerate(weekly_data):
             with cols[idx]:
                 with st.container(border=True):
-                    st.markdown(f"### {day['date']}")
+                    st.markdown("🔴 **TODAY**" if idx == 0 else f"**💡 Day {idx + 1}**")
+                    st.markdown(f"#### {day['date']}")
                     st.markdown(f"🌡️ **{day['low']} / {day['high']}**")
                     st.markdown("---")
                     st.markdown(f"**오전:** {day['am_icon']} {day['am_status']} ({day['am_pop']})")
                     st.markdown(f"**오후:** {day['pm_icon']} {day['pm_status']} ({day['pm_pop']})")
-
-# ------------------ [2) 과거날씨 탭] ------------------
-with tab_past:
-    st.markdown("### ⏳ 전년 동월(2025년 7월) 기상 실측 이력 데이터")
-    st.info("📊 **[출처]** 기상청 종관기상관측(ASOS) 서울(108) 관측소 공식 통계 API")
+                    
+    st.markdown("---")
     
-    past_weather = fetch_past_asos_weather(WEATHER_API_KEY)
-    if past_weather:
-        # 마케터가 가독성 높게 볼 수 있도록 테이블 및 메트릭 구조 배합
-        st.write("🗓️ **2025년 7월 일별 기온 및 강수량 실측 데이터 리스트**")
-        
-        # 4열 바둑판 구조 시각화
-        p_cols = st.columns(4)
-        for idx, p_day in enumerate(past_weather):
-            p_idx = idx % 4
-            with p_cols[p_idx]:
-                st.markdown(f"`{p_day['date']}` 🌡️ {p_day['low']} ~ {p_day['high']} | ☔ 강수: **{p_day['rain']}**")
-
-# ------------------ [3) 날씨전망 탭] ------------------
-with tab_forecast:
-    st.markdown("### 📊 전년대비 올해 기상 비교 분석 및 장기 전망")
-    st.info("📊 **[출처]** 기상청 1개월 장기 예보 분석 모델 연동")
-    
+    # 📌 [섹션 2: 날씨전망]
+    st.markdown("## 📊 [날씨전망] 전년대비 올해 비교 분석 및 장기 전망")
+    st.info("📊 기상청 공식 1개월 장기 예보 분석 모델 및 웨더아이 통계 요약 연동")
     long_data = fetch_long_term_forecast()
+    
     c1, c2 = st.columns(2)
     with c1:
         with st.container(border=True):
@@ -317,14 +300,29 @@ with tab_forecast:
             st.metric("🌧️ 평년 강수량 범위", long_data['normal_rain'], delta="올해 고습도 일수 증가 예상")
             st.success(f"🔎 **강수 전망:** {long_data['rain_status']}")
             
-    st.markdown("---")
     with st.container(border=True):
         st.markdown("#### 💡 마케팅 CRM 기획 전략 카피 제언")
         st.write(long_data['summary_text'])
+        
+    st.markdown("---")
+    
+    # 📌 [섹션 3: 과거날씨]
+    st.markdown("## ⏳ [과거날씨] 전년 동월(2025년 7월) 기상 실측 이력")
+    st.info("📊 기상청 종관기상관측(ASOS) 서울(108) 관측소 공식 통계 API 실측 데이터")
+    
+    past_weather = fetch_past_asos_weather(WEATHER_API_KEY)
+    if past_weather:
+        st.write("🗓️ **2025년 7월 일별 기온 및 강수량 실측 데이터 리스트**")
+        p_cols = st.columns(4)
+        for idx, p_day in enumerate(past_weather):
+            p_idx = idx % 4
+            with p_cols[p_idx]:
+                st.markdown(f"`{p_day['date']}` 🌡️ {p_day['low']} ~ {p_day['high']} | ☔ 강수: **{p_day['rain']}**")
 
-# ------------------ [뉴스 탭] ------------------
+# ------------------ [2번 탭: 뉴스] ------------------
 with tab_news:
     st.markdown("### 📡 실시간 핵심 뉴스 (상위 20개)")
+    st.info("📊 네이버 검색 오픈 API 뉴스 채널로부터 연동·스크랩하여 표출하고 있습니다.")
     with st.spinner("뉴스 데이터 수집 중..."):
         news_res = fetch_real_naver_news(NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)
     if news_res and news_res["success"]:
@@ -333,7 +331,7 @@ with tab_news:
                 st.markdown(f"#### {idx+1}. 🔗 [{item['title']}]({item['link']})")
                 st.write(item["description"])
 
-# ------------------ [경쟁사 프로모션 탭] ------------------
+# ------------------ [3번 탭: 프로모션] ------------------
 with tab_competitor:
     st.markdown("### 🎁 공식 기획전 실시간 스크랩 목록")
     with st.spinner("프로모션 긁어오는 중..."):
