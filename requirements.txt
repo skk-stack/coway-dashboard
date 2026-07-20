@@ -1,0 +1,5 @@
+streamlit
+requests
+playwright
+beautifulsoup4
+urllib3
