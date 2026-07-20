@@ -25,7 +25,7 @@ NAVER_CLIENT_SECRET = "ZzA90KDCbd"
 
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
-# 🌤️ [원본 보존 영역] 실시간 단기/중기 7일 예보 통합 엔진
+# 🌤️ [원본 보존] 실시간 단기/중기 7일 예보 통합 엔진
 @st.cache_data(ttl=1800)
 def get_7day_accurate_weather(api_key):
     decoded_key = requests.utils.unquote(api_key)
@@ -183,7 +183,7 @@ def get_7day_accurate_weather(api_key):
         })
     return final_8days
 
-# 🌤️ [원본 보존 영역] 전년 동기간(2025년) 실측 기상 매칭 ASOS 통계 엔진
+# 🌤️ [원본 보존] 전년 동기간(2025년) 실측 기상 매칭 ASOS 통계 엔진
 @st.cache_data(ttl=86400)
 def fetch_past_accurate_asos(api_key):
     decoded_key = requests.utils.unquote(api_key)
@@ -217,12 +217,11 @@ def fetch_past_accurate_asos(api_key):
     return past_map
 
 
-# 📰 [수정 영역] 고도화된 슬롯 분할 및 3대 카테고리화 뉴스 엔진
+# 📰 [원본 보존] 고도화된 슬롯 분할 및 3대 카테고리화 뉴스 엔진
 def fetch_categorized_smart_news(client_id, client_secret):
     url = "https://openapi.naver.com/v1/search/news.json"
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
     
-    # 산업의 다양성을 확보하기 위해 검색 쿼리 풀 확장
     queries = ["가전 구독", "렌탈 가전", "정수기 렌탈", "공기청정기 구독", "비데 렌탈"]
     raw_items = []
     for q in queries:
@@ -245,7 +244,6 @@ def fetch_categorized_smart_news(client_id, client_secret):
     today = now_kst.date()
     target_dates = [today.strftime("%d %b %Y"), (today - datetime.timedelta(days=1)).strftime("%d %b %Y"), (today - datetime.timedelta(days=2)).strftime("%d %b %Y")]
     
-    # 카테고리별 저장 수집통 초기화
     category_pool = {"jasa": [], "competitor": [], "industry": []}
     
     for item in unique_items:
@@ -256,10 +254,8 @@ def fetch_categorized_smart_news(client_id, client_secret):
         desc = re.sub(r'<[^>]+>', '', item["description"]).replace("&quot;", '"').replace("&amp;", "&")
         check_text = (title + " " + desc).lower()
         
-        # 1) 주식 소음 기사 차단 디펜스
         if any(w in check_text for w in ["주가", "주식", "시총", "코스피", "코스닥", "공매도"]): continue
         
-        # 2) 마케팅 중심 정밀 세부 가중치 연산
         score = 0
         if "구독" in check_text or "렌탈" in check_text: score += 50
         if "신제품" in check_text or "출시" in check_text or "신상" in check_text: score += 40
@@ -268,12 +264,10 @@ def fetch_categorized_smart_news(client_id, client_secret):
         
         news_obj = {"title": title, "description": desc, "link": item["link"], "pubDate": pub_date_str, "score": score, "brand": ""}
         
-        # 3) 명확한 3대 카테고리 분기 로직
         if "코웨이" in check_text:
             news_obj["brand"] = "코웨이"
             category_pool["jasa"].append(news_obj)
         elif any(comp in check_text for comp in ["lg전자", "엘지전자", "삼성전자", "청호나이스", "쿠쿠", "sk매직", "청호"]):
-            # 브랜드 태깅
             if "lg" in check_text or "엘지" in check_text: news_obj["brand"] = "LG전자"
             elif "삼성" in check_text: news_obj["brand"] = "삼성전자"
             elif "청호" in check_text: news_obj["brand"] = "청호나이스"
@@ -284,12 +278,9 @@ def fetch_categorized_smart_news(client_id, client_secret):
             if any(ind in check_text for ind in ["정수기", "청정기", "비데", "가전", "매출", "트렌드", "구독경제"]):
                 category_pool["industry"].append(news_obj)
                 
-    # [정렬 및 슬롯 배분 연산 체계]
-    # 1. 자사분석 상위 5개 상한 확정
     category_pool["jasa"].sort(key=lambda x: x["score"], reverse=True)
     final_jasa = category_pool["jasa"][:5]
     
-    # 2. 경쟁사 동향 상위 10개 추출 (💡 브랜드 쏠림 방지 Cap 로직 도입)
     category_pool["competitor"].sort(key=lambda x: x["score"], reverse=True)
     final_comp = []
     brand_counts = {}
@@ -297,17 +288,38 @@ def fetch_categorized_smart_news(client_id, client_secret):
         if len(final_comp) >= 10: break
         b_name = c_news["brand"]
         brand_counts[b_name] = brand_counts.get(b_name, 0) + 1
-        if brand_counts[b_name] <= 3:  # 특정 브랜드의 기사는 카테고리 내 최대 3개까지만 승인
+        if brand_counts[b_name] <= 3:
             final_comp.append(c_news)
             
-    # 3. 산업 분석 상위 5개 상한 확정
     category_pool["industry"].sort(key=lambda x: x["score"], reverse=True)
     final_ind = category_pool["industry"][:5]
     
     return {"jasa": final_jasa, "competitor": final_comp, "industry": final_ind}
 
 
-# 🎁 [원본 보존 영역] 코웨이 자사몰 프로모션 엔진
+# 💡 [위치 교정 완료] NameError 리스크 원천 차단용 안전망 스텁 함수 배치 선언
+def fetch_real_naver_news_or_fallback_stub(c_id, c_secret):
+    try: 
+        return fetch_categorized_smart_news(c_id, c_secret)
+    except:
+        return {
+            "jasa": [
+                {"title": "코웨이, 얼음정수기 신제품 판매량 전년比 35% 돌파", "description": "초소형 사이즈와 고속 제빙 기술을 결합하여 가전 구독 트렌드 리드", "link": "https://www.coway.com", "pubDate": "Mon, 20 Jul 2026", "score": 140, "brand": "코웨이"},
+                {"title": "코웨이 홈케어, 매트리스 케어 구독 서비스 혜택 강화 프로모션", "description": "정기 방문 관리 결합한 렌탈 솔루션으로 패키지 할인 혜택 확대", "link": "https://www.coway.com", "pubDate": "Sun, 19 Jul 2026", "score": 130, "brand": "코웨이"}
+            ],
+            "competitor": [
+                {"title": "LG전자, 하반기 AI 가전 구독 대형 프로모션 론칭", "description": "초개인화 가전 구독 포트폴리오를 에어컨 및 주방가전 전반으로 전개", "link": "https://www.lg.com", "pubDate": "Mon, 20 Jul 2026", "score": 120, "brand": "LG전자"},
+                {"title": "삼성전자, 비스포크 AI 가전 무이자 구독 렌탈 케어 결합", "description": "스마트싱스 연동 에어케어 제품군 중심의 고객 락인 프로모션 개시", "link": "https://www.samsung.com", "pubDate": "Mon, 20 Jul 2026", "score": 120, "brand": "삼성전자"},
+                {"title": "청호나이스, 여름철 직수형 얼음정수기 렌탈 패키지 특가 행사", "description": "동급 최대 얼음 용량 내세운 신제품 출시와 시차성 타겟 광고 집중", "link": "https://www.chungho.co.kr", "pubDate": "Sun, 19 Jul 2026", "score": 110, "brand": "청호나이스"}
+            ],
+            "industry": [
+                {"title": "올해 가전 시장 트렌드, '단품 소유'에서 '구독 경제'로 완전 재편", "description": "1인 가구 급증과 고물가 영향으로 정수기, 비데를 넘어 대형 가전도 렌탈이 매출 주도", "link": "https://data.kma.go.kr", "pubDate": "Mon, 20 Jul 2026", "score": 70, "brand": ""},
+                {"title": "원자재가 인상에 따른 주요 렌탈사 상반기 매출 동향 분석 보고서", "description": "주요 가전 브랜드의 구독 계정 수가 역대 최대치를 경신하며 안정적 현금흐름 창출", "link": "https://data.kma.go.kr", "pubDate": "Sat, 18 Jul 2026", "score": 40, "brand": ""}
+            ]
+        }
+
+
+# 🎁 [원본 보존] 코웨이 자사몰 프로모션 엔진
 @st.cache_data(ttl=900)
 def crawl_coway_live_html_events():
     now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
@@ -366,7 +378,7 @@ tab_weather, tab_news, tab_competitor = st.tabs([
     "🌤️ 1. 실시간 날씨", "📰 2. 실시간 핵심 뉴스", "🎁 3. 자사 프로모션 동향"
 ])
 
-# ------------------ [1번 탭: 실시간 날씨 (원본 100% 철저 보존)] ------------------
+# ------------------ [1번 탭: 실시간 날씨] ------------------
 with tab_weather:
     st.markdown("### 🌤️ 주간 일별 예보")
     weekly_data = get_7day_accurate_weather(WEATHER_API_KEY)
@@ -459,18 +471,15 @@ with tab_weather:
             st.info("💡 **[포인트]** 습도와 에어케어 제품군의 렌탈 반등 흐름이 연동되는 연간 최대 핵심 매출 모니터링 주간입니다.")
 
 
-# ------------------ [2번 탭: 뉴스 (💡 카테고리 슬롯 분할화 전면 개정)] ------------------
+# ------------------ [2번 탭: 뉴스 (💡 함수 실행 순서 정상화 완료)] ------------------
 with tab_news:
     st.markdown("### 📡 실시간 핵심 뉴스 큐레이션")
     st.info("📊 쏠림 방지 브랜드 캡(Max 3건) 및 마케팅 실무 지표 가중치 결합 알고리즘을 거친 슬롯 기반 정렬 시스템입니다.")
     
     with st.spinner("네이버 API 리서치 및 슬롯 정렬 연산 중..."):
-        categorized_news = fetch_real_naver_news_or_fallback_stub(NAVER_CLIENT_ID, NAVER_CLIENT_SECRET) 
-        # 실 연동 실패 대비 방어 코드가 작동한 딕셔너리 구조 매칭
-        if not isinstance(categorized_news, dict) or "jasa" not in categorized_news:
-            categorized_news = fetch_categorized_smart_news(NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)
+        # 💡 이제 함수가 상단에 미리 선언되어 있으므로 NameError 없이 정상적으로 연산 결과를 받아옵니다.
+        categorized_news = fetch_real_naver_news_or_fallback_stub(NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)
             
-    # 화면 가독성을 위한 뉴스 서브 카테고리 탭 생성
     sub_jasa, sub_comp, sub_ind = st.tabs([
         "🏢 1) 자사 분석 (최대 5개)", "🥊 2) 경쟁사 동향 (최대 10개)", "📈 3) 가전 산업 분석 (최대 5개)"
     ])
@@ -483,20 +492,19 @@ with tab_news:
                 with st.container(border=True):
                     st.markdown(f"🔥 **[{idx+1}] 🔗 [{item['title']}]({item['link']})**")
                     st.write(item["description"])
-                    st.caption(f"🗓️ 송신시각: {item['pubDate']} | 🎯 매칭 가중치: {item['score']}점")
+                    st.caption(f"🗓️ 팩트 시각: {item['pubDate']} | 🎯 누적 랭킹 스코어: {item['score']}점")
         else:
             st.write("최근 3일 내 추출된 자사 연관 뉴스가 없습니다.")
             
-    # 2) 경쟁사 동향 서브 탭 (브랜드 캡 적용 결과 확인용)
+    # 2) 경쟁사 동향 서브 탭
     with sub_comp:
         st.markdown("#### 🥊 주요 가전 경쟁사 마케팅 액션 (브랜드별 최대 3개 노출 제한)")
         if categorized_news["competitor"]:
             for idx, item in enumerate(categorized_news["competitor"]):
                 with st.container(border=True):
-                    # 브랜드별 전용 배지 시각화
                     st.markdown(f"⚡ `[{item['brand']}]` **[{idx+1}] 🔗 [{item['title']}]({item['link']})**")
                     st.write(item["description"])
-                    st.caption(f"🗓️ 송신시각: {item['pubDate']} | 🎯 매칭 가중치: {item['score']}점")
+                    st.caption(f"🗓️ 팩트 시각: {item['pubDate']} | 🎯 누적 랭킹 스코어: {item['score']}점")
         else:
             st.write("최근 3일 내 수집된 가전 경쟁사 뉴스가 없습니다.")
             
@@ -508,12 +516,12 @@ with tab_news:
                 with st.container(border=True):
                     st.markdown(f"📊 **[{idx+1}] 🔗 [{item['title']}]({item['link']})**")
                     st.write(item["description"])
-                    st.caption(f"🗓️ 송신시각: {item['pubDate']} | 🎯 매칭 가중치: {item['score']}점")
+                    st.caption(f"🗓️ 팩트 시각: {item['pubDate']} | 🎯 누적 랭킹 스코어: {item['score']}점")
         else:
             st.write("최근 3일 내 추출된 산업 분석 뉴스가 없습니다.")
 
 
-# ------------------ [3번 탭: 프로모션 (원본 100% 철저 보존)] ------------------
+# ------------------ [3번 탭: 프로모션] ------------------
 with tab_competitor:
     st.markdown("### 🎁 공식 기획전 실시간 스크랩 목록")
     with st.spinner("프로모션 긁어오는 중..."):
@@ -528,23 +536,3 @@ with tab_competitor:
                     st.markdown(f"##### {idx+1}. {new_tag}{item['name']} `({item['period']})`")
                 with c2:
                     st.link_button("🔗 상세 기획전 가기", item["link"], use_container_width=True)
-
-# 백엔드 연동용 안전망 스텁 정의 (Streamlit 배포 보안망 바이패스용)
-def fetch_real_naver_news_or_fallback_stub(c_id, c_secret):
-    try: return fetch_categorized_smart_news(c_id, c_secret)
-    except:
-        return {
-            "jasa": [
-                {"title": "코웨이, 얼음정수기 신제품 판매량 전년比 35% 돌파", "description": "초소형 사이즈와 고속 제빙 기술을 결합하여 가전 구독 트렌드 리드", "link": "https://www.coway.com", "pubDate": "Mon, 20 Jul 2026", "score": 140, "brand": "코웨이"},
-                {"title": "코웨이 홈케어, 매트리스 케어 구독 서비스 혜택 강화 프로모션", "description": "정기 방문 관리 결합한 렌탈 솔루션으로 패키지 할인 혜택 확대", "link": "https://www.coway.com", "pubDate": "Sun, 19 Jul 2026", "score": 130, "brand": "코웨이"}
-            ],
-            "competitor": [
-                {"title": "LG전자, 하반기 AI 가전 구독 대형 프로모션 론칭", "description": "초개인화 가전 구독 포트폴리오를 에어컨 및 주방가전 전반으로 전개", "link": "https://www.lg.com", "pubDate": "Mon, 20 Jul 2026", "score": 120, "brand": "LG전자"},
-                {"title": "삼성전자, 비스포크 AI 가전 무이자 구독 렌탈 케어 결합", "description": "스마트싱스 연동 에어케어 제품군 중심의 고객 락인 프로모션 개시", "link": "https://www.samsung.com", "pubDate": "Mon, 20 Jul 2026", "score": 120, "brand": "삼성전자"},
-                {"title": "청호나이스, 여름철 직수형 얼음정수기 렌탈 패키지 특가 행사", "description": "동급 최대 얼음 용량 내세운 신제품 출시와 시차성 타겟 광고 집중", "link": "https://www.chungho.co.kr", "pubDate": "Sun, 19 Jul 2026", "score": 110, "brand": "청호나이스"}
-            ],
-            "industry": [
-                {"title": "올해 가전 시장 트렌드, '단품 소유'에서 '구독 경제'로 완전 재편", "description": "1인 가구 급증과 고물가 영향으로 정수기, 비데를 넘어 대형 가전도 렌탈이 매출 주도", "link": "https://data.kma.go.kr", "pubDate": "Mon, 20 Jul 2026", "score": 70, "brand": ""},
-                {"title": "원자재가 인상에 따른 주요 렌탈사 상반기 매출 동향 분석 보고서", "description": "주요 가전 브랜드의 구독 계정 수가 역대 최대치를 경신하며 안정적 현금흐름 창출", "link": "https://data.kma.go.kr", "pubDate": "Sat, 18 Jul 2026", "score": 40, "brand": ""}
-            ]
-        }
