@@ -27,12 +27,13 @@ WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
 # ------------------ [날씨/마케팅 헬퍼 함수 - 기존 유지] ------------------
 def get_coway_action(status, max_temp, humidity):
-    if "비" in status or "소나기" in status or "눈" in status or humidity > 70:
-        return {"icon": "🌧️", "status": status, "prod": "노블 제습기 / 의류청정기 에어카운터", "crm": "☔ 꿉꿉한 날씨 소식, 코웨이 제습기로 보송함을 유지해 보세요!"}
+    status_str = str(status) if status else "흐림"
+    if "비" in status_str or "소나기" in status_str or "눈" in status_str or humidity > 70:
+        return {"icon": "🌧️", "status": status_str, "prod": "노블 제습기 / 의류청정기 에어카운터", "crm": "☔ 꿉꿉한 날씨 소식, 코웨이 제습기로 보송함을 유지해 보세요!"}
     elif max_temp >= 30:
-        return {"icon": "🧊", "status": status, "prod": "아이콘 얼음정수기 / 멀티액션 청정기", "crm": "☀️ 최고 기온 30도 이상 무더위 예보! 시원한 얼음 가득 코웨이 얼음정수기를 추천하세요."}
+        return {"icon": "🧊", "status": status_str, "prod": "아이콘 얼음정수기 / 멀티액션 청정기", "crm": "☀️ 최고 기온 30도 이상 무더위 예보! 시원한 얼음 가득 코웨이 얼음정수기를 추천하세요."}
     else:
-        return {"icon": "🍃", "status": status, "prod": "마이한뼘 정수기 / 룰루 비데", "crm": "🏡 쾌적한 하루의 시작, 깨끗한 물과 공기를 선사하는 코웨이 정수기 기획전!"}
+        return {"icon": "🍃", "status": status_str, "prod": "마이한뼘 정수기 / 룰루 비데", "crm": "🏡 쾌적한 하루의 시작, 깨끗한 물과 공기를 선사하는 코웨이 정수기 기획전!"}
 
 @st.cache_data(ttl=3600)
 def fetch_air_quality(api_key):
@@ -76,7 +77,7 @@ def get_10day_real_weather(api_key):
         ann_date = today
     tm_fc = f"{mid_base_date}{mid_base_time}"
     
-    # 💡 단기예보 파싱 (1~3일차: 월, 화, 수 공백 없이 완벽 적재)
+    # 단기예보 파싱 (1~3일차: 월, 화, 수)
     short_url = f"http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey={decoded_key}"
     short_params = {"pageNo": "1", "numOfRows": "800", "dataType": "XML", "base_date": today_str, "base_time": "0500", "nx": "60", "ny": "127"}
     short_map = {}
@@ -97,7 +98,7 @@ def get_10day_real_weather(api_key):
                 elif category == "SKY": short_map[dt]["sky"] = max(short_map[dt]["sky"], int(val))
     except: pass
 
-    # 중기육상예보 파싱 (4~10일차: 목요일 이후)
+    # 중기육상예보 파싱 (4~10일차)
     land_url = f"http://apis.data.go.kr/1360000/MidFcstInfoService/getMidLandFcst?serviceKey={decoded_key}"
     land_params = {"pageNo": "1", "numOfRows": "10", "dataType": "XML", "regId": "11A00101", "tmFc": tm_fc}
     mid_land_map = {}
@@ -137,29 +138,33 @@ def get_10day_real_weather(api_key):
         weekday_str = WEEKDAYS[target_date.weekday()]
         date_display = f"{target_date.strftime('%m.%d')} {weekday_str}"
         
-        # 💡 1-3일차 (월, 화, 수) -> 단기 예보 동기화
+        # 1-3일차 -> 단기 예보 동기화
         if target_date in short_map and len(short_map[target_date]["temps"]) > 0:
             info = short_map[target_date]
             low_t = min(info["temps"])
             high_t = max(info["temps"])
             humi = sum(info["humidity"]) // len(info["humidity"]) if info["humidity"] else 60
             status = "비" if info["pty"] in [1, 2, 4] else ("맑음" if info["sky"] == 1 else "흐림")
-        # 💡 4-10일차 (목~다음주 수) -> 중기 예보 동기화
+        # 4-10일차 -> 중기 예보 동기화
         else:
             day_gap = (target_date - ann_date).days
             status = mid_land_map.get(day_gap, "흐림")
             temp_info = mid_temp_map.get(day_gap, {"low": "24", "high": "31"})
             low_t = temp_info.get("low", "24")
             high_t = temp_info.get("high", "31")
-            humi = 85 if "비" in status or "소나기" in status else 60
             
-        # 💡 [정밀 문장 분석 패치] 기상청의 복잡한 날씨 문장을 완벽하게 해석하여 매칭
-        if any(keyword in status for keyword in ["비", "소나기", "눈", "강수"]):
+            # 💡 [TypeError 방어선] status가 None일 경우 문자열로 안전하게 변환
+            status_check = str(status) if status else "흐림"
+            humi = 85 if "비" in status_check or "소나기" in status_check else 60
+            
+        # 💡 문자열 안전 보장 후 정밀 문장 분석
+        status_str = str(status) if status else "흐림"
+        if any(keyword in status_str for keyword in ["비", "소나기", "눈", "강수"]):
             icon = "🌧️"
-            clean_status = status  # 기상청이 준 텍스트 그대로 표출
-        elif any(keyword in status for keyword in ["흐림", "구름많음", "흐리고", "구름많고"]):
+            clean_status = status_str
+        elif any(keyword in status_str for keyword in ["흐림", "구름많음", "흐리고", "구름많고"]):
             icon = "☁️"
-            clean_status = status
+            clean_status = status_str
         else:
             icon = "☀️"
             clean_status = "맑음"
