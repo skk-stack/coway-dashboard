@@ -25,7 +25,7 @@ NAVER_CLIENT_SECRET = "ZzA90KDCbd"
 
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
-# 🌤️ [수정영역] 실시간 단기/중기 7일 예보 통합 엔진
+# 🌤️ 실시간 단기/중기 7일 예보 통합 엔진
 @st.cache_data(ttl=1800)
 def get_7day_accurate_weather(api_key):
     decoded_key = requests.utils.unquote(api_key)
@@ -141,6 +141,7 @@ def get_7day_accurate_weather(api_key):
     for i in range(8):
         t_date = today + datetime.timedelta(days=i)
         w_str = WEEKDAYS[t_date.weekday()]
+        
         date_display = f"{t_date.strftime('%d일')}({w_str})"
         sub_label = "오늘" if i == 0 else ("내일" if i == 1 else ("모레" if i == 2 else f"({w_str})"))
         day_gap = (t_date - ann_date).days
@@ -183,13 +184,12 @@ def get_7day_accurate_weather(api_key):
     return final_8days
 
 
-# 🌤️ [수정영역] 전년 동기간(2025년) 실측 기상 매칭 ASOS 통계 엔진
+# 🌤️ 전년 동기간(2025년) 실측 기상 매칭 ASOS 통계 엔진
 @st.cache_data(ttl=86400)
 def fetch_past_accurate_asos(api_key):
     decoded_key = requests.utils.unquote(api_key)
     url = "http://apis.data.go.kr/1360000/AsosDalyInfoService/getWthrDataList"
     
-    # 💡 마케터 지정 2025년 동기간 타겟 수집
     params = {
         "pageNo": "1", "numOfRows": "10", "dataType": "XML",
         "dataCd": "ASOS", "dateCd": "DAY", "startDt": "20250720", "endDt": "20250727", "stnIds": "108"
@@ -318,7 +318,7 @@ tab_weather, tab_news, tab_competitor = st.tabs([
     "🌤️ 1. 실시간 날씨", "📰 2. 실시간 핵심 뉴스", "🎁 3. 자사 프로모션 동향"
 ])
 
-# ------------------ [1번 탭: 실시간 날씨 (3대 섹션 완전 개편 적용)] ------------------
+# ------------------ [1번 탭: 실시간 날씨] ------------------
 with tab_weather:
     # 📌 [섹션 1: 주간 일별 예보]
     st.markdown("### 🌤️ 주간 일별 예보")
@@ -344,11 +344,10 @@ with tab_weather:
 
     st.markdown("<br><hr>", unsafe_allow_html=True)
 
-    # 📌 [섹션 2: 전년 동기간 일별 날씨 (2025년 매칭)]
+    # 📌 [섹션 2: 전년 동기간 일별 날씨 (💡 NameError 오류 수리 적용 영역)]
     st.markdown("### ⏳ 전년 동기간 일별 날씨")
-    past_map = fetch_past_asos_weather(WEATHER_API_KEY)
+    past_map = fetch_past_accurate_asos(WEATHER_API_KEY)  # 💡 선언된 올바른 함수명으로 정밀 교정
     
-    # 2025년 타겟 가상 날짜 배열 생성
     past_dates = ["07.20", "07.21", "07.22", "07.23", "07.24", "07.25", "07.26", "07.27"]
     past_weekdays = ["일", "월", "화", "수", "목", "금", "토", "일"]
     
@@ -362,12 +361,11 @@ with tab_weather:
         
     for idx, p_date in enumerate(past_dates):
         with cols_past[idx + 1]:
-            # 기본 실측 프레임 처리 (API 매칭 혹은 지표 정렬)
             low_p, high_p = "23°C", "30°C"
             rn_p = "-"
             am_ico_p, pm_ico_p = "☀️", "☁️"
             
-            # 💡 작년 이미지 실측치 오차 0% 정밀 보정 삽입
+            # 작년 이미지 실측치 동기화
             if idx == 0: low_p, high_p, rn_p, am_ico_p, pm_ico_p = "23°C", "28°C", "15mm", "☁️", "🌧️"
             elif idx == 1: low_p, high_p, rn_p, am_ico_p, pm_ico_p = "25°C", "30°C", "22mm", "🌧️", "🌧️"
             elif idx == 2: low_p, high_p, rn_p, am_ico_p, pm_ico_p = "24°C", "29°C", "8mm", "🌧️", "☁️"
@@ -381,11 +379,8 @@ with tab_weather:
 
     st.markdown("<br><hr>", unsafe_allow_html=True)
 
-    # 📌 [섹션 3: 주차별 날씨 전망 (자동 업데이트형)]
+    # 📌 [섹션 3: 주차별 날씨 전망]
     st.markdown("### 📊 주차별 날씨 전망")
-    st.caption("※ 본 장기 분석 카드는 기상청 1개월 전망 모델 데이터를 기반으로 현재 시스템 주차에 매칭되어 실시간 순환 업데이트됩니다.")
-    
-    # 마케터 요청에 따른 3대 주차 분할 로직 구축
     select_week = st.selectbox("🔎 분석할 주차를 선택하세요", ["7월 5주차 (07.27 ~ 08.02)", "8월 1주차 (08.03 ~ 08.09)", "8월 2주차 (08.10 ~ 08.16)"])
     
     with st.container(border=True):
@@ -405,7 +400,7 @@ with tab_weather:
             st.write("• **강수량 전망:** 평년(28.4 ~ 74.2mm)과 **비슷할 확률 50%** (발달한 저기압 통과 가능성 상존)")
             st.info("💡 **[포인트]** 습도와 에어케어 제품군의 렌탈 반등 흐름이 연동되는 연간 최대 핵심 매출 모니터링 주간입니다.")
 
-# ------------------ [2번 탭: 뉴스 (원본 100% 보존)] ------------------
+# ------------------ [2번 탭: 뉴스] ------------------
 with tab_news:
     st.markdown("### 📡 실시간 핵심 뉴스")
     with st.spinner("뉴스 데이터 수집 중..."):
@@ -421,7 +416,7 @@ with tab_news:
                     st.write(item["description"])
                     st.caption(f"🗓️ 뉴스 전송 시각: {item['pubDate']} | 🎯 매칭 랭킹 점수: {item['score']}점")
 
-# ------------------ [3번 탭: 프로모션 (원본 100% 보존)] ------------------
+# ------------------ [3번 탭: 프로모션] ------------------
 with tab_competitor:
     st.markdown("### 🎁 공식 기획전 실시간 스크랩 목록")
     with st.spinner("프로모션 긁어오는 중..."):
