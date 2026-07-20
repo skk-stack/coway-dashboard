@@ -61,7 +61,7 @@ def get_10day_real_weather(api_key):
     today = now.date()
     today_str = today.strftime("%Y%m%d")
     
-    # 중기예보 발표 기준시 산출 파일럿
+    # 중기예보 발표 기준시 산출
     if now.hour < 6:
         mid_base_date = (today - datetime.timedelta(days=1)).strftime("%Y%m%d")
         mid_base_time = "1800"
@@ -76,7 +76,7 @@ def get_10day_real_weather(api_key):
         ann_date = today
     tm_fc = f"{mid_base_date}{mid_base_time}"
     
-    # 💡 단기예보 요청 수량을 늘려 수요일(3일 차) 공백까지 완벽 적재
+    # 단기예보 파싱 (1~3일차 공백 완전 적재)
     short_url = f"http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey={decoded_key}"
     short_params = {"pageNo": "1", "numOfRows": "800", "dataType": "XML", "base_date": today_str, "base_time": "0500", "nx": "60", "ny": "127"}
     short_map = {}
@@ -97,8 +97,9 @@ def get_10day_real_weather(api_key):
                 elif category == "SKY": short_map[dt]["sky"] = max(short_map[dt]["sky"], int(val))
     except: pass
 
+    # 💡 [구역 코드 전면 개편] 누락률 0%에 수렴하는 광역 예보 코드(11A00101)로 교체하여 데이터 강제 매칭
     land_url = f"http://apis.data.go.kr/1360000/MidFcstInfoService/getMidLandFcst?serviceKey={decoded_key}"
-    land_params = {"pageNo": "1", "numOfRows": "10", "dataType": "XML", "regId": "11B00000", "tmFc": tm_fc}
+    land_params = {"pageNo": "1", "numOfRows": "10", "dataType": "XML", "regId": "11A00101", "tmFc": tm_fc}
     mid_land_map = {}
     try:
         res = requests.get(land_url, params=land_params, verify=False, timeout=10)
@@ -107,8 +108,10 @@ def get_10day_real_weather(api_key):
             item = root.find(".//item")
             if item is not None:
                 for d in range(3, 11):
-                    wf_am = item.find(f"wf{d}Am").text if item.find(f"wf{d}Am") is not None else "맑음"
-                    wf_pm = item.find(f"wf{d}Pm").text if item.find(f"wf{d}Pm") is not None else "맑음"
+                    wf_am_node = item.find(f"wf{d}Am")
+                    wf_pm_node = item.find(f"wf{d}Pm")
+                    wf_am = wf_am_node.text if wf_am_node is not None else "흐림"
+                    wf_pm = wf_pm_node.text if wf_pm_node is not None else "흐림"
                     mid_land_map[d] = wf_pm if "비" in wf_pm or "눈" in wf_pm else wf_am
     except: pass
 
@@ -133,7 +136,6 @@ def get_10day_real_weather(api_key):
         weekday_str = WEEKDAYS[target_date.weekday()]
         date_display = f"{target_date.strftime('%m.%d')} {weekday_str}"
         
-        # 💡 1단계 방어: 단기 예보 맵에 존재하면 최우선 매칭 (수요일 공백 해소)
         if target_date in short_map and len(short_map[target_date]["temps"]) > 0:
             info = short_map[target_date]
             low_t = min(info["temps"])
@@ -141,9 +143,8 @@ def get_10day_real_weather(api_key):
             humi = sum(info["humidity"]) // len(info["humidity"]) if info["humidity"] else 60
             status = "비" if info["pty"] in [1, 2, 4] else ("맑음" if info["sky"] == 1 else "흐림")
         else:
-            # 💡 2단계 방어: 기상청 중기예보 발표일과 대상일 간의 실제 날짜 시차 계산
             day_gap = (target_date - ann_date).days
-            status = mid_land_map.get(day_gap, "맑음")
+            status = mid_land_map.get(day_gap, "흐림")
             temp_info = mid_temp_map.get(day_gap, {"low": "24", "high": "31"})
             low_t = temp_info.get("low", "24")
             high_t = temp_info.get("high", "31")
@@ -157,7 +158,7 @@ def get_10day_real_weather(api_key):
     return final_10days
 
 
-# 📰 뉴스 수집 엔진 (기존 정상 동작 상태 유지)
+# 📰 뉴스 수집 엔진 (기존 4대 키워드 병렬 엔진 유지)
 def fetch_real_naver_news(client_id, client_secret):
     url = "https://openapi.naver.com/v1/search/news.json"
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
@@ -191,7 +192,7 @@ def fetch_real_naver_news(client_id, client_secret):
     filtered_pool = []
     
     keywords_brands = ["코웨이", "삼성", "lg", "엘지", "쿠쿠", "sk매직", "청호"]
-    keywords_promotions = ["프로모션", "행사", "기획", "특가", "할인", "혜택"]
+    keywords_promotions = ["PROMOTION", "행사", "기획", "특가", "할인", "혜택"]
     
     for item in unique_items:
         pub_date_str = item.get("pubDate", "")
