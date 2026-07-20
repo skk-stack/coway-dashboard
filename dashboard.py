@@ -56,25 +56,29 @@ def fetch_air_quality(api_key):
 def get_10day_real_weather(api_key):
     decoded_key = requests.utils.unquote(api_key)
     
-    # 💡 [버그 교정 핵심부] 해외 서버 시차를 무력화하고 무조건 한국 표준시(KST) 기준으로 시각 동기화
+    # 한국 표준시(KST) 동기화
     now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
     today = now.date()
     today_str = today.strftime("%Y%m%d")
     
-    # 기상청 API 발표 기준 타임 설정 (오전 6시 / 오후 6시 기준 정밀 판정)
+    # 중기예보 발표 기준시 산출 파일럿
     if now.hour < 6:
         mid_base_date = (today - datetime.timedelta(days=1)).strftime("%Y%m%d")
         mid_base_time = "1800"
+        ann_date = today - datetime.timedelta(days=1)
     elif now.hour < 18:
         mid_base_date = today_str
         mid_base_time = "0600"
+        ann_date = today
     else:
         mid_base_date = today_str
         mid_base_time = "1800"
+        ann_date = today
     tm_fc = f"{mid_base_date}{mid_base_time}"
     
+    # 💡 단기예보 요청 수량을 늘려 수요일(3일 차) 공백까지 완벽 적재
     short_url = f"http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey={decoded_key}"
-    short_params = {"pageNo": "1", "numOfRows": "400", "dataType": "XML", "base_date": today_str, "base_time": "0500", "nx": "60", "ny": "127"}
+    short_params = {"pageNo": "1", "numOfRows": "800", "dataType": "XML", "base_date": today_str, "base_time": "0500", "nx": "60", "ny": "127"}
     short_map = {}
     try:
         res = requests.get(short_url, params=short_params, verify=False, timeout=10)
@@ -102,10 +106,10 @@ def get_10day_real_weather(api_key):
             root = ET.fromstring(res.text)
             item = root.find(".//item")
             if item is not None:
-                for day in range(3, 11):
-                    wf_am = item.find(f"wf{day}Am").text if item.find(f"wf{day}Am") is not None else "맑음"
-                    wf_pm = item.find(f"wf{day}Pm").text if item.find(f"wf{day}Pm") is not None else "맑음"
-                    mid_land_map[day] = wf_pm if "비" in wf_pm or "눈" in wf_pm else wf_am
+                for d in range(3, 11):
+                    wf_am = item.find(f"wf{d}Am").text if item.find(f"wf{d}Am") is not None else "맑음"
+                    wf_pm = item.find(f"wf{d}Pm").text if item.find(f"wf{d}Pm") is not None else "맑음"
+                    mid_land_map[d] = wf_pm if "비" in wf_pm or "눈" in wf_pm else wf_am
     except: pass
 
     temp_url = f"http://apis.data.go.kr/1360000/MidFcstInfoService/getMidTa?serviceKey={decoded_key}"
@@ -117,10 +121,10 @@ def get_10day_real_weather(api_key):
             root = ET.fromstring(res.text)
             item = root.find(".//item")
             if item is not None:
-                for day in range(3, 11):
-                    low_t = item.find(f"taMin{day}").text if item.find(f"taMin{day}").text is not None else "24"
-                    high_t = item.find(f"taMax{day}").text if item.find(f"taMax{day}").text is not None else "31"
-                    mid_temp_map[day] = {"low": low_t, "high": high_t}
+                for d in range(3, 11):
+                    low_t = item.find(f"taMin{d}").text if item.find(f"taMin{d}") is not None else "24"
+                    high_t = item.find(f"taMax{d}").text if item.find(f"taMax{d}") is not None else "31"
+                    mid_temp_map[d] = {"low": low_t, "high": high_t}
     except: pass
 
     final_10days = []
@@ -129,6 +133,7 @@ def get_10day_real_weather(api_key):
         weekday_str = WEEKDAYS[target_date.weekday()]
         date_display = f"{target_date.strftime('%m.%d')} {weekday_str}"
         
+        # 💡 1단계 방어: 단기 예보 맵에 존재하면 최우선 매칭 (수요일 공백 해소)
         if target_date in short_map and len(short_map[target_date]["temps"]) > 0:
             info = short_map[target_date]
             low_t = min(info["temps"])
@@ -136,8 +141,10 @@ def get_10day_real_weather(api_key):
             humi = sum(info["humidity"]) // len(info["humidity"]) if info["humidity"] else 60
             status = "비" if info["pty"] in [1, 2, 4] else ("맑음" if info["sky"] == 1 else "흐림")
         else:
-            status = mid_land_map.get(i, "맑음")
-            temp_info = mid_temp_map.get(i, {"low": "24", "high": "31"})
+            # 💡 2단계 방어: 기상청 중기예보 발표일과 대상일 간의 실제 날짜 시차 계산
+            day_gap = (target_date - ann_date).days
+            status = mid_land_map.get(day_gap, "맑음")
+            temp_info = mid_temp_map.get(day_gap, {"low": "24", "high": "31"})
             low_t = temp_info.get("low", "24")
             high_t = temp_info.get("high", "31")
             humi = 85 if "비" in status or "소나기" in status else 60
@@ -150,7 +157,7 @@ def get_10day_real_weather(api_key):
     return final_10days
 
 
-# 📰 [유지 완료] 네이버 뉴스 API 4가지 단독 키워드 병렬 수집 엔진 (KST 날짜 동기화 포함)
+# 📰 뉴스 수집 엔진 (기존 정상 동작 상태 유지)
 def fetch_real_naver_news(client_id, client_secret):
     url = "https://openapi.naver.com/v1/search/news.json"
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
@@ -164,8 +171,7 @@ def fetch_real_naver_news(client_id, client_secret):
             res = requests.get(url, headers=headers, params=params, verify=False, timeout=10)
             if res.status_code == 200:
                 raw_items.extend(res.json().get("items", []))
-        except:
-            pass
+        except: pass
             
     seen_links = set()
     unique_items = []
@@ -175,7 +181,6 @@ def fetch_real_naver_news(client_id, client_secret):
             seen_links.add(link)
             unique_items.append(item)
             
-    # 한국 표준시 기준 날짜 스탬프 매칭
     now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
     today = now_kst.date()
     d1 = today.strftime("%d %b %Y")
@@ -191,32 +196,22 @@ def fetch_real_naver_news(client_id, client_secret):
     for item in unique_items:
         pub_date_str = item.get("pubDate", "")
         is_recent = any(ds in pub_date_str for ds in target_dates)
-        if not is_recent:
-            continue
+        if not is_recent: continue
             
         title = re.sub(r'<[^>]+>', '', item["title"]).replace("&quot;", '"').replace("&amp;", "&")
         desc = re.sub(r'<[^>]+>', '', item["description"]).replace("&quot;", '"').replace("&amp;", "&")
         check_text = (title + " " + desc).lower()
         
-        if any(w in check_text for w in ["주가", "주식", "시총", "코스피", "코스닥"]):
-            continue
+        if any(w in check_text for w in ["주가", "주식", "시총", "코스피", "코스닥"]): continue
             
         score = 0
-        if "코웨이" in check_text:
-            score += 100
-        if "구독" in check_text or "렌탈" in check_text:
-            score += 50
-        if any(kb in check_text for kb in keywords_brands):
-            score += 30
-        if any(kp in check_text for kp in keywords_promotions):
-            score += 20
+        if "코웨이" in check_text: score += 100
+        if "구독" in check_text or "렌탈" in check_text: score += 50
+        if any(kb in check_text for kb in keywords_brands): score += 30
+        if any(kp in check_text for kp in keywords_promotions): score += 20
             
         filtered_pool.append({
-            "title": title,
-            "description": desc,
-            "link": item["link"],
-            "pubDate": pub_date_str,
-            "score": score
+            "title": title, "description": desc, "link": item["link"], "pubDate": pub_date_str, "score": score
         })
         
     filtered_pool.sort(key=lambda x: x["score"], reverse=True)
@@ -328,7 +323,6 @@ with tab_news:
         news_res = fetch_real_naver_news(NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)
         
     if news_res and news_res["success"]:
-        now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
         st.success(f"📅 실시간 최신 렌탈/구독 핵심 뉴스 총 {len(news_res['news'])}개 스크랩 및 랭킹 순 정렬 완료")
         
         if len(news_res['news']) == 0:
