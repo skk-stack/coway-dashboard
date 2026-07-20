@@ -55,10 +55,13 @@ def fetch_air_quality(api_key):
 @st.cache_data(ttl=1800)
 def get_10day_real_weather(api_key):
     decoded_key = requests.utils.unquote(api_key)
-    today = datetime.date.today()
+    
+    # 💡 [버그 교정 핵심부] 해외 서버 시차를 무력화하고 무조건 한국 표준시(KST) 기준으로 시각 동기화
+    now = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    today = now.date()
     today_str = today.strftime("%Y%m%d")
     
-    now = datetime.datetime.now()
+    # 기상청 API 발표 기준 타임 설정 (오전 6시 / 오후 6시 기준 정밀 판정)
     if now.hour < 6:
         mid_base_date = (today - datetime.timedelta(days=1)).strftime("%Y%m%d")
         mid_base_time = "1800"
@@ -147,12 +150,11 @@ def get_10day_real_weather(api_key):
     return final_10days
 
 
-# 📰 [수정 적용] 네이버 뉴스 API 4가지 단독 키워드 병렬 수집 엔진
+# 📰 [유지 완료] 네이버 뉴스 API 4가지 단독 키워드 병렬 수집 엔진 (KST 날짜 동기화 포함)
 def fetch_real_naver_news(client_id, client_secret):
     url = "https://openapi.naver.com/v1/search/news.json"
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
     
-    # 💡 [수정 반영] 1. 가전, 2. 구독, 3. 렌탈, 4. 정수기 총 4개 단순 단독 키워드로 전송 모수 극대화
     queries = ["가전", "구독", "렌탈", "정수기"]
     raw_items = []
     
@@ -165,7 +167,6 @@ def fetch_real_naver_news(client_id, client_secret):
         except:
             pass
             
-    # 중복 뉴스 제거 (링크 기준)
     seen_links = set()
     unique_items = []
     for item in raw_items:
@@ -174,23 +175,21 @@ def fetch_real_naver_news(client_id, client_secret):
             seen_links.add(link)
             unique_items.append(item)
             
-    # 최근 3일 날짜 스탬프 생성
-    today = datetime.date.today()
-    d1 = today.strftime("%d %b %Y")                       # 오늘
-    d2 = (today - datetime.timedelta(days=1)).strftime("%d %b %Y") # 어제
-    d3 = (today - datetime.timedelta(days=2)).strftime("%d %b %Y") # 그저께
+    # 한국 표준시 기준 날짜 스탬프 매칭
+    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    today = now_kst.date()
+    d1 = today.strftime("%d %b %Y")
+    d2 = (today - datetime.timedelta(days=1)).strftime("%d %b %Y")
+    d3 = (today - datetime.timedelta(days=2)).strftime("%d %b %Y")
     
     target_dates = [d1, d2, d3]
     filtered_pool = []
     
-    # 가점 평가용 소프트 필터 키워드 정의
     keywords_brands = ["코웨이", "삼성", "lg", "엘지", "쿠쿠", "sk매직", "청호"]
     keywords_promotions = ["프로모션", "행사", "기획", "특가", "할인", "혜택"]
     
     for item in unique_items:
         pub_date_str = item.get("pubDate", "")
-        
-        # 최근 3일 내 기사 판별
         is_recent = any(ds in pub_date_str for ds in target_dates)
         if not is_recent:
             continue
@@ -199,11 +198,9 @@ def fetch_real_naver_news(client_id, client_secret):
         desc = re.sub(r'<[^>]+>', '', item["description"]).replace("&quot;", '"').replace("&amp;", "&")
         check_text = (title + " " + desc).lower()
         
-        # 시황 찌라시 뉴스 스킵
         if any(w in check_text for w in ["주가", "주식", "시총", "코스피", "코스닥"]):
             continue
             
-        # 내부 소프트 필터링 및 가중치 점수 연산
         score = 0
         if "코웨이" in check_text:
             score += 100
@@ -222,14 +219,14 @@ def fetch_real_naver_news(client_id, client_secret):
             "score": score
         })
         
-    # 점수 높은 순서대로 랭킹 정렬
     filtered_pool.sort(key=lambda x: x["score"], reverse=True)
     return {"success": True, "news": filtered_pool[:20]}
 
 
 @st.cache_data(ttl=900)
 def crawl_coway_live_html_events():
-    current_month = datetime.date.today().strftime("%m")
+    now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
+    current_month = now_kst.strftime("%m")
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -331,6 +328,7 @@ with tab_news:
         news_res = fetch_real_naver_news(NAVER_CLIENT_ID, NAVER_CLIENT_SECRET)
         
     if news_res and news_res["success"]:
+        now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
         st.success(f"📅 실시간 최신 렌탈/구독 핵심 뉴스 총 {len(news_res['news'])}개 스크랩 및 랭킹 순 정렬 완료")
         
         if len(news_res['news']) == 0:
