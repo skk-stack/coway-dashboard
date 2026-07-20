@@ -25,17 +25,7 @@ NAVER_CLIENT_SECRET = "ZzA90KDCbd"
 
 WEEKDAYS = ["월", "화", "수", "목", "금", "토", "일"]
 
-# ------------------ [날씨/마케팅 헬퍼 함수] ------------------
-def get_coway_action(status, max_temp, humidity):
-    status_str = str(status) if status else "흐림"
-    if "비" in status_str or "소나기" in status_str or "눈" in status_str or humidity > 70:
-        return {"icon": "🌧️", "status": status_str, "prod": "노블 제습기 / 의류청정기 에어카운터", "crm": "☔ 꿉꿉한 날씨 소식, 코웨이 제습기로 보송함을 마케팅하세요!"}
-    elif max_temp >= 30:
-        return {"icon": "🧊", "status": status_str, "prod": "아이콘 얼음정수기 / 멀티액션 청정기", "crm": "☀️ 최고 기온 30도 이상 무더위! 시원한 얼음 가득 코웨이 얼음정수기 추천 적기입니다."}
-    else:
-        return {"icon": "🍃", "status": status_str, "prod": "마이한뼘 정수기 / 룰루 비데", "crm": "🏡 쾌적한 하루의 시작, 깨끗한 물과 공기를 선사하는 코웨이 가전 기획전!"}
-
-# 🌤️ [수정 영역] 전국 기준 오늘 ~ d+7일 정밀 날씨 엔진
+# 🌤️ [수정 영역] 실시간 발표 시각 자동 매칭 및 7일 예보 엔진
 @st.cache_data(ttl=1800)
 def get_7day_accurate_weather(api_key):
     decoded_key = requests.utils.unquote(api_key)
@@ -43,6 +33,35 @@ def get_7day_accurate_weather(api_key):
     today = now.date()
     today_str = today.strftime("%Y%m%d")
     
+    # 1) 단기예보 실시간 최신 발표 타임(base_time) 동적 동기화 알고리즘
+    if now.hour < 2:
+        base_date = (today - datetime.timedelta(days=1)).strftime("%Y%m%d")
+        base_time = "2300"
+    elif now.hour < 5:
+        base_date = today_str
+        base_time = "0200"
+    elif now.hour < 8:
+        base_date = today_str
+        base_time = "0500"
+    elif now.hour < 11:
+        base_date = today_str
+        base_time = "0800"
+    elif now.hour < 14:
+        base_date = today_str
+        base_time = "1100"  # 💡 현재 시점에 기상청이 낸 최신 예보 자동 타겟팅
+    elif now.hour < 17:
+        base_date = today_str
+        base_time = "1400"
+    elif now.hour < 20:
+        base_date = today_str
+        base_time = "1700"
+    elif now.hour < 23:
+        base_date = today_str
+        base_time = "2000"
+    else:
+        base_date = today_str
+        base_time = "2300"
+        
     # 중기 기준 타임라인 매칭
     if now.hour < 6:
         mid_base_date = (today - datetime.timedelta(days=1)).strftime("%Y%m%d")
@@ -58,9 +77,9 @@ def get_7day_accurate_weather(api_key):
         ann_date = today
     tm_fc = f"{mid_base_date}{mid_base_time}"
     
-    # [단기예보 파싱] 전국 대표 표준 좌표 (nx=60, ny=127)
+    # 단기예보 호출 (전국 대표 표준 격자 nx=60, ny=127)
     short_url = f"http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst?serviceKey={decoded_key}"
-    short_params = {"pageNo": "1", "numOfRows": "1000", "dataType": "XML", "base_date": today_str, "base_time": "0500", "nx": "60", "ny": "127"}
+    short_params = {"pageNo": "1", "numOfRows": "1000", "dataType": "XML", "base_date": base_date, "base_time": base_time, "nx": "60", "ny": "127"}
     short_map = {}
     
     try:
@@ -87,7 +106,7 @@ def get_7day_accurate_weather(api_key):
                     else: short_map[dt]["pm_pty"].append(int(val))
     except: pass
 
-    # [중기육상예보 파싱] 전국 대표 통합 구역 (regId=11B00000)
+    # 중기육상예보 파싱 (regId=11B00000)
     land_url = f"http://apis.data.go.kr/1360000/MidFcstInfoService/getMidLandFcst?serviceKey={decoded_key}"
     land_params = {"pageNo": "1", "numOfRows": "10", "dataType": "XML", "regId": "11B00000", "tmFc": tm_fc}
     mid_land_map = {}
@@ -106,7 +125,7 @@ def get_7day_accurate_weather(api_key):
                     }
     except: pass
 
-    # [중기기온조회 파싱] 전국 대표 기온 (regId=11B10101)
+    # 중기기온조회 파싱 (regId=11B10101)
     temp_url = f"http://apis.data.go.kr/1360000/MidFcstInfoService/getMidTa?serviceKey={decoded_key}"
     temp_params = {"pageNo": "1", "numOfRows": "10", "dataType": "XML", "regId": "11B10101", "tmFc": tm_fc}
     mid_temp_map = {}
@@ -124,23 +143,22 @@ def get_7day_accurate_weather(api_key):
     except: pass
 
     final_8days = []
-    # 오늘(Day 0)부터 향후 7일(Day 7)까지 총 8일간 루프 생성
     for i in range(8):
         t_date = today + datetime.timedelta(days=i)
         w_str = WEEKDAYS[t_date.weekday()]
         date_display = f"{t_date.strftime('%m.%d')} ({w_str})"
         day_gap = (t_date - ann_date).days
         
-        # 단기예보 구간 (오늘, 내일, 모레)
+        # 1~3일차 단기구간 정밀 매칭
         if t_date in short_map and i < 3:
             s_info = short_map[t_date]
             low_t = s_info["tmn"] if s_info["tmn"] is not None else 24
             high_t = s_info["tmx"] if s_info["tmx"] is not None else 30
             
-            # 오전 예보 만료 및 시간 경과 시 '-' 기호 완벽 매칭
+            # 오늘 오전 등 지나간 시간 예보 결측치 처리 ('-')
             if not s_info["am_pop"] or (i == 0 and now.hour >= 12):
                 am_pop = "-"
-                am_status = "기간 만료"
+                am_status = "-"
                 am_icon = "—"
             else:
                 max_am_pop = max(s_info["am_pop"])
@@ -160,7 +178,7 @@ def get_7day_accurate_weather(api_key):
                 pm_status = "비" if has_rain_pm > 0 else "구름많음"
                 pm_icon = "🌧️" if has_rain_pm > 0 else "☁️"
                 
-        # 중기예보 구간 (d+3일차 ~ d+7일차)
+        # 4일차 이후 중기구간 이미지 데이터 매칭
         else:
             m_info = mid_land_map.get(day_gap, {"am_status": "흐림", "pm_status": "흐림", "am_pop": "60%", "pm_pop": "60%"})
             t_info = mid_temp_map.get(day_gap, {"low": "24", "high": "31"})
@@ -179,22 +197,18 @@ def get_7day_accurate_weather(api_key):
     return final_8days
 
 
-# 📰 [원본 철저 보존] 네이버 뉴스 4대 키워드 단독 수집 및 정밀 가중치 랭킹 엔진
+# 📰 [원본 보존] 네이버 뉴스 4대 키워드 수집 엔진
 def fetch_real_naver_news(client_id, client_secret):
     url = "https://openapi.naver.com/v1/search/news.json"
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
-    
     queries = ["가전", "구독", "렌탈", "정수기"]
     raw_items = []
-    
     for q in queries:
         try:
             params = {"query": q, "display": 50, "sort": "date"}
             res = requests.get(url, headers=headers, params=params, verify=False, timeout=10)
-            if res.status_code == 200:
-                raw_items.extend(res.json().get("items", []))
+            if res.status_code == 200: raw_items.extend(res.json().get("items", []))
         except: pass
-            
     seen_links = set()
     unique_items = []
     for item in raw_items:
@@ -202,45 +216,33 @@ def fetch_real_naver_news(client_id, client_secret):
         if link not in seen_links:
             seen_links.add(link)
             unique_items.append(item)
-            
     now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
     today = now_kst.date()
     d1 = today.strftime("%d %b %Y")
     d2 = (today - datetime.timedelta(days=1)).strftime("%d %b %Y")
     d3 = (today - datetime.timedelta(days=2)).strftime("%d %b %Y")
-    
     target_dates = [d1, d2, d3]
     filtered_pool = []
-    
     keywords_brands = ["코웨이", "삼성", "lg", "엘지", "쿠쿠", "sk매직", "청호"]
     keywords_promotions = ["프로모션", "행사", "기획", "특가", "할인", "혜택"]
-    
     for item in unique_items:
         pub_date_str = item.get("pubDate", "")
-        is_recent = any(ds in pub_date_str for ds in target_dates)
-        if not is_recent: continue
-            
+        if not any(ds in pub_date_str for ds in target_dates): continue
         title = re.sub(r'<[^>]+>', '', item["title"]).replace("&quot;", '"').replace("&amp;", "&")
         desc = re.sub(r'<[^>]+>', '', item["description"]).replace("&quot;", '"').replace("&amp;", "&")
         check_text = (title + " " + desc).lower()
-        
         if any(w in check_text for w in ["주가", "주식", "시총", "코스피", "코스닥"]): continue
-            
         score = 0
         if "코웨이" in check_text: score += 100
         if "구독" in check_text or "렌탈" in check_text: score += 50
         if any(kb in check_text for kb in keywords_brands): score += 30
         if any(kp in check_text for kp in keywords_promotions): score += 20
-            
-        filtered_pool.append({
-            "title": title, "description": desc, "link": item["link"], "pubDate": pub_date_str, "score": score
-        })
-        
+        filtered_pool.append({"title": title, "description": desc, "link": item["link"], "pubDate": pub_date_str, "score": score})
     filtered_pool.sort(key=lambda x: x["score"], reverse=True)
     return {"success": True, "news": filtered_pool[:20]}
 
 
-# 🎁 [원본 철저 보존] 코웨이 자사몰 24건 풀 데이터 연동 및 크롤러 엔진
+# 🎁 [원본 보존] 코웨이 자사몰 프로모션 엔진
 @st.cache_data(ttl=900)
 def crawl_coway_live_html_events():
     now_kst = datetime.datetime.utcnow() + datetime.timedelta(hours=9)
@@ -261,14 +263,12 @@ def crawl_coway_live_html_events():
             scraped_data = []
             content_area = soup.select_one(".event-list, .event_list, main, #container")
             cards = content_area.select("li, div[class*='card'], a[href*='eventno']") if content_area else soup.select("ul li, div[class*='card']")
-            ignore_keywords = ["진행중 이벤트", "당첨자 발표", "제휴카드", "로고", "가격 혜택", "홈"]
             for card in cards:
                 text_content = card.get_text(" ", strip=True)
-                if any(k in text_content for k in ["페스타", "기획전", "프로모션", "렌탈", "이벤트", "할인"]):
+                if any(k in text_content for k in ["페스타", "기획전", "프로모션", "렌탈", "할인"]):
                     lines = [l.strip() for l in text_content.split("\n") if l.strip()]
                     title = lines[0] if lines else ""
-                    if not title or any(ik in title for ik in ignore_keywords) or len(title) <= 3 or len(title) > 60:
-                        continue
+                    if not title or len(title) <= 3 or len(title) > 60: continue
                     if not any(e["name"] == title for e in scraped_data):
                         detail_link = "https://www.coway.com/event/list"
                         a_tag = card if card.name == "a" else card.select_one("a")
@@ -283,8 +283,7 @@ def crawl_coway_live_html_events():
                             month_match = re.search(r'\.(\d{2})\.', start_date)
                             if month_match and month_match.group(1) == current_month: is_new = True
                         scraped_data.append({"name": title, "period": period_str, "link": detail_link, "is_new": is_new})
-            if scraped_data:
-                return {"success": True, "source": "공식 홈페이지 실시간 동적 파싱 성공", "data": scraped_data}
+            if scraped_data: return {"success": True, "source": "공식 홈페이지 실시간 동적 파싱 성공", "data": scraped_data}
     except: pass
     backup_data = [
         {"name": "아이스페스타", "period": "2026.06.29~2026.08.27", "link": "https://www.coway.com/event/detail?eventno=380", "is_new": False},
@@ -296,64 +295,49 @@ def crawl_coway_live_html_events():
 
 
 # ==========================================
-# 🗂️ 3대 핵심 요약 탭 레이아웃 구조
+# 🗂️ 탭 구조 정의 (1번 탭명 '실시간 날씨' 변경 적용)
 # ==========================================
 tab_weather, tab_news, tab_competitor = st.tabs([
-    "🌤️ 1. 전국 주간 날세요약 (오늘 ~ d+7)", "📰 2. 실시간 핵심 뉴스", "🎁 3. 자사 프로모션 동향"
+    "🌤️ 1. 실시간 날씨", "📰 2. 실시간 핵심 뉴스", "🎁 3. 자사 프로모션 동향"
 ])
 
-# ------------------ [1번 탭: 날씨 종합] ------------------
+# ------------------ [1번 탭: 실시간 날씨 (가이드 영역 제거 및 이미지형 레이아웃)] ------------------
 with tab_weather:
-    st.markdown("## 🌤️ [주간예보] 전국 표준 대표 권역 향후 8일간 정밀 예보")
-    st.info("📊 기상청 공식 오픈 API(단기/중기 예보)의 전국 표준 관측값 데이터를 기반으로 작동합니다. 오늘 오전처럼 마감된 데이터는 자동으로 '-' 처리됩니다.")
+    st.markdown("## 🌤️ 기상청 전국 표준 권역 일별 예보")
+    st.info("📊 현재 시각에 발령된 기상청 단기예보 및 중기예보 통계 정보를 이미지 표 포맷 그대로 시각화하여 로드합니다.")
     
     weekly_data = get_7day_accurate_weather(WEATHER_API_KEY)
     if weekly_data:
-        # 8일치를 4일씩 2개 행으로 깔끔하게 나누어 가독성 증대
+        # 8일간의 데이터를 4일씩 2개 분할 배치
         row1 = weekly_data[:4]
         row2 = weekly_data[4:]
         
-        # 첫 번째 행 출력
+        # 첫 번째 라인 (오늘 ~ 모레 구간 포함)
         cols1 = st.columns(4)
         for idx, day in enumerate(row1):
             with cols1[idx]:
                 with st.container(border=True):
-                    st.markdown("🔴 **TODAY (오늘)**" if idx == 0 else f"**💡 Day {idx + 1}**")
-                    st.markdown(f"#### {day['date']}")
-                    st.markdown(f"🌡️ 기온: **{day['low']} / {day['high']}**")
+                    st.markdown("🔹 **TODAY (오늘)**" if idx == 0 else f"**💡 Day {idx + 1}**")
+                    st.markdown(f"### {day['date']}")
                     st.markdown("---")
-                    if day['am_pop'] == "-":
-                        st.markdown(f"**오전:** —")
-                    else:
-                        st.markdown(f"**오전:** {day['am_icon']} {day['am_pop']}")
-                    st.markdown(f"**오후:** {day['pm_icon']} {day['pm_pop']}")
+                    # 이미지 레이아웃 사양대로 텍스트 데이터 일대일 매칭 구현
+                    st.markdown(f"**🌡️ 기온 (최저/최고):** <span style='color:#1f77b4; font-weight:bold;'>{day['low']}</span> / <span style='color:#d62728; font-weight:bold;'>{day['high']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**☔ 강수확률 (오전):** {day['am_icon']} **{day['am_pop']}**")
+                    st.markdown(f"**☔ 강수확률 (오후):** {day['pm_icon']} **{day['pm_pop']}**")
                     
-                    # 마케팅 상품 추천 바인딩
-                    high_temp_num = int(day['high'].replace('°C',''))
-                    day_action = get_coway_action(day['pm_status'], high_temp_num, 60)
-                    with st.expander("🎯 마케팅 가이드"):
-                        st.caption(f"**추천 상품:**\n{day_action['prod']}")
-                        st.caption(f"**CRM 카피:**\n{day_action['crm']}")
-                        
         st.markdown("---")
         
-        # 두 번째 행 출력
+        # 두 번째 라인 (중기 구간)
         cols2 = st.columns(4)
         for idx, day in enumerate(row2):
             with cols2[idx]:
                 with st.container(border=True):
                     st.markdown(f"**💡 Day {idx + 5}**")
-                    st.markdown(f"#### {day['date']}")
-                    st.markdown(f"🌡️ 기온: **{day['low']} / {day['high']}**")
+                    st.markdown(f"### {day['date']}")
                     st.markdown("---")
-                    st.markdown(f"**오전:** {day['am_icon']} {day['am_pop']}")
-                    st.markdown(f"**오후:** {day['pm_icon']} {day['pm_pop']}")
-                    
-                    high_temp_num = int(day['high'].replace('°C',''))
-                    day_action = get_coway_action(day['pm_status'], high_temp_num, 60)
-                    with st.expander("🎯 마케팅 가이드"):
-                        st.caption(f"**추천 상품:**\n{day_action['prod']}")
-                        st.caption(f"**CRM 카피:**\n{day_action['crm']}")
+                    st.markdown(f"**🌡️ 기온 (최저/최고):** <span style='color:#1f77b4; font-weight:bold;'>{day['low']}</span> / <span style='color:#d62728; font-weight:bold;'>{day['high']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**☔ 강수확률 (오전):** {day['am_icon']} **{day['am_pop']}**")
+                    st.markdown(f"**☔ 강수확률 (오후):** {day['pm_icon']} **{day['pm_pop']}**")
 
 # ------------------ [2번 탭: 뉴스] ------------------
 with tab_news:
